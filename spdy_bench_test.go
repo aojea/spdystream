@@ -1,6 +1,7 @@
 package spdystream
 
 import (
+	"crypto/rand"
 	"fmt"
 	"io"
 	"net"
@@ -89,6 +90,7 @@ func benchmarkStreamWithDataAndSize(size uint64, b *testing.B) {
 		stream, err := spdyConn.CreateStream(http.Header{}, nil, false)
 
 		writer := make([]byte, size)
+		rand.Read(writer)
 
 		stream.Write(writer)
 
@@ -97,7 +99,10 @@ func benchmarkStreamWithDataAndSize(size uint64, b *testing.B) {
 		}
 
 		reader := make([]byte, size)
-		stream.Read(reader)
+		n, err := stream.Read(reader)
+		if err != nil {
+			panic(err)
+		}
 
 		stream.Close()
 
@@ -111,3 +116,7 @@ func benchmarkStreamWithDataAndSize(size uint64, b *testing.B) {
 func BenchmarkStreamWith1Byte10000(b *testing.B)     { benchmarkStreamWithDataAndSize(1, b) }
 func BenchmarkStreamWith1KiloByte10000(b *testing.B) { benchmarkStreamWithDataAndSize(1024, b) }
 func BenchmarkStreamWith1Megabyte10000(b *testing.B) { benchmarkStreamWithDataAndSize(1024*1024, b) }
+
+func BenchmarkStreamWith100Meggabyte10000(b *testing.B) {
+	benchmarkStreamWithDataAndSize(102*1024*100, b)
+}

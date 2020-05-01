@@ -3,6 +3,7 @@ package spdystream
 import (
 	"bufio"
 	"bytes"
+	"crypto/rand"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -15,6 +16,86 @@ import (
 
 	"github.com/docker/spdystream/spdy"
 )
+
+func TestFuzzySpdyStreams(t *testing.T) {
+	var wg sync.WaitGroup
+	server, listen, serverErr := runServer(&wg)
+	if serverErr != nil {
+		t.Fatalf("Error initializing server: %s", serverErr)
+	}
+
+	conn, dialErr := net.Dial("tcp", listen)
+	if dialErr != nil {
+		t.Fatalf("Error dialing server: %s", dialErr)
+	}
+
+	spdyConn, spdyErr := NewConnection(conn, false)
+	if spdyErr != nil {
+		t.Fatalf("Error creating spdy connection: %s", spdyErr)
+	}
+	go spdyConn.Serve(NoOpStreamHandler)
+
+	authenticated = true
+	stream, streamErr := spdyConn.CreateStream(http.Header{}, nil, false)
+	if streamErr != nil {
+		t.Fatalf("Error creating stream: %s", streamErr)
+	}
+
+	waitErr := stream.Wait()
+	if waitErr != nil {
+		t.Fatalf("Error waiting for stream: %s", waitErr)
+	}
+
+	// 1 Megabyte
+	// messageSize := 1024*1024*1
+	messageSize := 4000000
+
+	message := make([]byte, messageSize)
+	rand.Read(message)
+	go func() {
+		writeErr := stream.WriteData(message, false)
+		if writeErr != nil {
+			t.Fatalf("Error writing data")
+		}
+	}()
+
+
+	buf := make([]byte, messageSize)
+	for {
+	n, readErr := stream.Read(buf)
+	if readErr != nil {
+		t.Fatalf("Error reading data from stream: %s", readErr)
+	}
+	fmt.Println("reding", n)
+	if n!= 32768{
+		break
+	}
+}
+
+	n := len(buf)
+	if n != messageSize {
+		t.Fatalf("Unexpected number of bytes read:\nActual: %d\nExpected: %d", n,messageSize)
+	}
+	if bytes.Compare(buf, message) != 0 {
+		t.Fatalf("Did not receive expected message:\nActual: %v\nExpectd: %v", buf[:10], message[:10])
+	}
+
+	streamCloseErr := stream.Close()
+	if streamCloseErr != nil {
+		t.Fatalf("Error closing finished stream")
+	}
+
+	spdyCloseErr := spdyConn.Close()
+	if spdyCloseErr != nil {
+		t.Fatalf("Error closing spdy connection: %s", spdyCloseErr)
+	}
+
+	closeErr := server.Close()
+	if closeErr != nil {
+		t.Fatalf("Error shutting down server: %s", closeErr)
+	}
+	wg.Wait()
+}
 
 func TestSpdyStreams(t *testing.T) {
 	var wg sync.WaitGroup
@@ -112,38 +193,6 @@ func TestSpdyStreams(t *testing.T) {
 	n, readErr = stream.Read(buf)
 	if readErr != io.EOF {
 		t.Fatalf("Expected EOF reading from finished stream, read %d bytes", n)
-	}
-
-	// Closing again should return error since stream is already closed
-	streamCloseErr := stream.Close()
-	if streamCloseErr == nil {
-		t.Fatalf("No error closing finished stream")
-	}
-	if streamCloseErr != ErrWriteClosedStream {
-		t.Fatalf("Unexpected error closing stream: %s", streamCloseErr)
-	}
-
-	streamResetErr := stream.Reset()
-	if streamResetErr != nil {
-		t.Fatalf("Error reseting stream: %s", streamResetErr)
-	}
-
-	authenticated = false
-	badStream, badStreamErr := spdyConn.CreateStream(http.Header{}, nil, false)
-	if badStreamErr != nil {
-		t.Fatalf("Error creating stream: %s", badStreamErr)
-	}
-
-	waitErr = badStream.Wait()
-	if waitErr == nil {
-		t.Fatalf("Did not receive error creating stream")
-	}
-	if waitErr != ErrReset {
-		t.Fatalf("Unexpected error creating stream: %s", waitErr)
-	}
-	streamCloseErr = badStream.Close()
-	if streamCloseErr == nil {
-		t.Fatalf("No error closing bad stream")
 	}
 
 	spdyCloseErr := spdyConn.Close()
